@@ -54,10 +54,10 @@ fn reinvesting_check_exchange_rates() {
     .unwrap();
     assert_eq!(res.messages.len(), 4);
 
-    // ustake: (0_100000 - (111 - fees)), utoken: 1_000000 + (234 - fees)
+    // ustake: (100_000 - (111 - fees)), utoken: 100_000 + (234 - fees)
     assert_eq!(
         res.attributes,
-        vec![attr("action", "erishub/reinvest"), attr("exchange_rate", "10.013334668134948443")]
+        vec![attr("action", "erishub/reinvest"), attr("exchange_rate", "1.003423766142757032")]
     );
     assert_eq!(
         state.stake_token.load(deps.as_mut().storage).unwrap(),
@@ -111,9 +111,9 @@ fn reinvesting_check_exchange_rates() {
             .into_iter()
             .map(|a| format!("{0};{1}", a.0, a.1))
             .collect::<Vec<String>>(),
-        vec!["86400;10.045183898466759712".to_string(), "0;10.013334668134948443".to_string()]
+        vec!["86400;1.008404205114817306".to_string(), "0;1.003423766142757032".to_string()]
     );
 
     // 10.013334668134948443 -> 10.045183898466759712 within 1 day
-    assert_eq!(res.apr.map(|a| a.to_string()), Some("0.003180681699690299".to_string()));
+    assert_eq!(res.apr.map(|a| a.to_string()), Some("0.004963445296104046".to_string()));
 }
