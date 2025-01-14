@@ -10,8 +10,7 @@ use crate::contract::{execute, instantiate};
 use crate::error::ContractError;
 use crate::state::State;
 use crate::testing::helpers::{
-    chain_test, check_received_coin, get_stake_full_denom, BTC_DENOM, MOCK_UTOKEN,
-    WHALE_BTC_LP_DENOM, WHALE_BTC_POOL,
+    chain_test, check_received_coin, get_stake_full_denom, BTC_DENOM, MOCK_UTOKEN, WHALE_BTC_POOL,
 };
 use crate::types::{Delegation, Redelegation};
 use eris::alliance_lst::{AllianceStakeToken, ExecuteMsg, InstantiateMsg, QueryMsg};
@@ -48,7 +47,6 @@ fn setup_test() -> OwnedDeps<MockStorage, MockApi, CustomQuerier, CustomQueryTyp
                 shares_bps: vec![("alice".into(), 6000), ("bob".into(), 4000)],
             }),
             validator_proxy: "proxy".to_string(),
-            whale_btc_lp_denom: WHALE_BTC_LP_DENOM.to_string(),
             whale_btc_pool: WHALE_BTC_POOL.to_string(),
             btc_denom: BTC_DENOM.to_string(),
         },

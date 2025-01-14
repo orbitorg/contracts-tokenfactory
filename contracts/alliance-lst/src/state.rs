@@ -32,8 +32,6 @@ pub struct State<'a> {
     pub stake_token: Item<'a, AllianceStakeToken>,
 
     // WhaleX config
-    /// LP denom of Whale-BTC
-    pub whale_btc_lp_denom: Item<'a, String>,
     /// Pool contract of Whale-BTC pair
     pub whale_btc_pool: Item<'a, Addr>,
     /// Denom of BTC
@@ -96,7 +94,6 @@ impl Default for State<'static> {
             stages_preset: Item::new("stages_preset"),
             withdrawals_preset: Item::new("withdrawals_preset"),
             stake_token: Item::new("stake_token"),
-            whale_btc_lp_denom: Item::new("whale_btc_lp_denom"),
             btc_denom: Item::new("btc_denom"),
             whale_btc_pool: Item::new("whale_btc_pool"),
             epoch_period: Item::new("epoch_period"),

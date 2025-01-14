@@ -76,7 +76,6 @@ pub fn instantiate(
         },
     )?;
 
-    state.whale_btc_lp_denom.save(deps.storage, &msg.whale_btc_lp_denom)?;
     state.whale_btc_pool.save(deps.storage, &deps.api.addr_validate(&msg.whale_btc_pool)?)?;
     state.btc_denom.save(deps.storage, &msg.btc_denom)?;
 
@@ -294,10 +293,10 @@ pub fn harvest(
         // 5. provide liquidity
         .add_submessage(sub_msg)
         // 6. apply lp token to unlocked_coins
-        .add_message(check_lp_received(
+        .add_message(check_received_coin_msg(
             &deps,
             &env,
-            state.whale_btc_lp_denom.load(deps.storage)?,
+            state.stake_token.load(deps.storage)?,
             None,
         )?)
         // 7. restake unlocked_coins
@@ -432,34 +431,6 @@ fn validate_no_belief_price(stages: &Vec<Vec<SingleSwapConfig>>) -> Result<(), C
         }
     }
     Ok(())
-}
-
-/// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution
-fn check_lp_received(
-    deps: &DepsMut<CustomQueryType>,
-    env: &Env,
-    whale_btc_lp: String,
-    // offset to account for funds being sent that should be ignored
-    negative_offset: Option<Uint128>,
-) -> StdResult<CosmosMsg<CustomMsgType>> {
-    let mut amount =
-        deps.querier.query_balance(env.contract.address.to_string(), &whale_btc_lp)?.amount;
-    if let Some(negative_offset) = negative_offset {
-        amount = amount.checked_sub(negative_offset)?;
-    }
-    CallbackMsg::CheckReceivedCoin {
-        // Take current balance - offset
-        snapshot: Coin {
-            denom: whale_btc_lp.clone(),
-            amount,
-        },
-        // Ignore this
-        snapshot_stake: Coin {
-            denom: whale_btc_lp,
-            amount,
-        },
-    }
-    .into_cosmos_msg(&env.contract.address)
 }
 
 /// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution and swap half rewards to bitcoin

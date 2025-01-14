@@ -31,10 +31,10 @@ pub struct InstantiateMsg {
     /// Account who can call harvest
     pub operator: String,
     /// Denom of the underlaying staking token
-    pub utoken: String,
+    pub utoken: String, // WHALE_BTC_LP_DENOM
 
     /// Name of the liquid staking token
-    pub denom: String,
+    pub denom: String, // WhaleX
     /// How often the unbonding queue is to be executed, in seconds
     pub epoch_period: u64,
     /// The staking module's unbonding time, in seconds
@@ -42,7 +42,6 @@ pub struct InstantiateMsg {
     /// Specifies a validators proxy contract, so that validators are not locally stored
     pub validator_proxy: String,
 
-    pub whale_btc_lp_denom: String,
     pub whale_btc_pool: String,
     pub btc_denom: String,
 
