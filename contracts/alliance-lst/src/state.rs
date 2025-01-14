@@ -1,5 +1,3 @@
-use std::ops::Add;
-
 use cosmwasm_std::{Addr, Coin, Decimal, QuerierWrapper, StdError, Storage};
 use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, MultiIndex};
 
