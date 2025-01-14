@@ -42,6 +42,10 @@ pub struct InstantiateMsg {
     /// Specifies a validators proxy contract, so that validators are not locally stored
     pub validator_proxy: String,
 
+    pub whale_btc_lp_denom: String,
+    pub whale_btc_pool: String,
+    pub btc_denom: String,
+
     /// Contract address where fees are sent
     pub protocol_fee_contract: String,
     /// Fees that are being applied during reinvest of staking rewards

@@ -1,3 +1,5 @@
+use std::ops::Add;
+
 use cosmwasm_std::{Addr, Coin, Decimal, QuerierWrapper, StdError, Storage};
 use cw_storage_plus::{Index, IndexList, IndexedMap, Item, Map, MultiIndex};
 
@@ -30,6 +32,15 @@ pub struct State<'a> {
     pub new_owner: Item<'a, Addr>,
     /// Denom and supply of the Liquid Staking token
     pub stake_token: Item<'a, AllianceStakeToken>,
+
+    // WhaleX config
+    /// LP denom of Whale-BTC
+    pub whale_btc_lp_denom: Item<'a, String>,
+    /// Pool contract of Whale-BTC pair
+    pub whale_btc_pool: Item<'a, Addr>,
+    /// Denom of BTC
+    pub btc_denom: Item<'a, String>,
+
     /// How often the unbonding queue is to be executed
     pub epoch_period: Item<'a, u64>,
     /// The staking module's unbonding time, in seconds
@@ -87,6 +98,9 @@ impl Default for State<'static> {
             stages_preset: Item::new("stages_preset"),
             withdrawals_preset: Item::new("withdrawals_preset"),
             stake_token: Item::new("stake_token"),
+            whale_btc_lp_denom: Item::new("whale_btc_lp_denom"),
+            btc_denom: Item::new("btc_denom"),
+            whale_btc_pool: Item::new("whale_btc_pool"),
             epoch_period: Item::new("epoch_period"),
             unbond_period: Item::new("unbond_period"),
             validator_proxy: Item::new("validator_proxy"),

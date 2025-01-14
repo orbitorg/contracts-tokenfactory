@@ -1,23 +1,25 @@
-use std::cmp;
 use std::collections::HashMap;
+use std::{cmp, vec};
 
 use cosmwasm_std::{
     attr, to_json_binary, Addr, Attribute, BankMsg, Coin, CosmosMsg, Decimal, DepsMut, Env, Event,
-    Order, Response, StdResult, Uint128, WasmMsg,
+    Order, ReplyOn, Response, StdResult, SubMsg, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use eris::alliance_lst::{AllianceStakeToken, InstantiateMsg, Undelegation};
 use eris::helper::validate_received_funds;
 use eris::{CustomEvent, CustomMsgExt, CustomResponse, DecimalCheckedOps};
 
+use eris::adapters::pair::Pair;
 use eris::hub::{
     Batch, CallbackMsg, DelegationStrategy, ExecuteMsg, FeeConfig, PendingBatch, SingleSwapConfig,
     UnbondRequest,
 };
 use eris_chain_adapter::types::{
     chain, get_balances_hashmap, AssetExt, AssetInfoExt, CustomMsgType, CustomQueryType, DenomType,
-    HubChainConfig, WithdrawType,
+    HubChainConfig, StageType, WithdrawType,
 };
+
 use itertools::Itertools;
 
 use crate::constants::get_reward_fee_cap;
@@ -73,6 +75,10 @@ pub fn instantiate(
             delegations: HashMap::new(),
         },
     )?;
+
+    state.whale_btc_lp_denom.save(deps.storage, &msg.whale_btc_lp_denom)?;
+    state.whale_btc_pool.save(deps.storage, &deps.api.addr_validate(&msg.whale_btc_pool)?)?;
+    state.btc_denom.save(deps.storage, &msg.btc_denom)?;
 
     // by default donations are set to false
     state.allow_donations.save(deps.storage, &false)?;
@@ -260,6 +266,17 @@ pub fn harvest(
             .collect_vec()
     });
 
+    let provide_liquidity = Pair(env.contract.address.clone())
+        .provide_liquidity_msg(vec![], None, Some(env.contract.address.to_string()), vec![])?
+        .to_specific()?;
+
+    let sub_msg = SubMsg {
+        id: 1,
+        msg: provide_liquidity,
+        gas_limit: None,
+        reply_on: ReplyOn::Never,
+    };
+
     Ok(Response::new()
         // 1. Withdraw delegation rewards
         .add_messages(withdraw_submsgs)
@@ -268,13 +285,22 @@ pub fn harvest(
         // 3 swap - multiple single stage swaps
         .add_optional_callbacks(&env, swap_msgs)?
         // 4. apply received total utoken to unlocked_coins
-        .add_message(check_received_coin_msg(
+        .add_messages(check_received_coin_and_half_swap_msg(
             &deps,
             &env,
             state.stake_token.load(deps.storage)?,
             None,
         )?)
-        // 5. restake unlocked_coins
+        // 5. provide liquidity
+        .add_submessage(sub_msg)
+        // 6. apply lp token to unlocked_coins
+        .add_message(check_lp_received(
+            &deps,
+            &env,
+            state.whale_btc_lp_denom.load(deps.storage)?,
+            None,
+        )?)
+        // 7. restake unlocked_coins
         .add_callback(
             &env,
             CallbackMsg::Reinvest {
@@ -406,6 +432,91 @@ fn validate_no_belief_price(stages: &Vec<Vec<SingleSwapConfig>>) -> Result<(), C
         }
     }
     Ok(())
+}
+
+/// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution
+fn check_lp_received(
+    deps: &DepsMut<CustomQueryType>,
+    env: &Env,
+    whale_btc_lp: String,
+    // offset to account for funds being sent that should be ignored
+    negative_offset: Option<Uint128>,
+) -> StdResult<CosmosMsg<CustomMsgType>> {
+    let mut amount =
+        deps.querier.query_balance(env.contract.address.to_string(), &whale_btc_lp)?.amount;
+    if let Some(negative_offset) = negative_offset {
+        amount = amount.checked_sub(negative_offset)?;
+    }
+    CallbackMsg::CheckReceivedCoin {
+        // Take current balance - offset
+        snapshot: Coin {
+            denom: whale_btc_lp.clone(),
+            amount,
+        },
+        // Ignore this
+        snapshot_stake: Coin {
+            denom: whale_btc_lp,
+            amount,
+        },
+    }
+    .into_cosmos_msg(&env.contract.address)
+}
+
+/// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution and swap half rewards to bitcoin
+fn check_received_coin_and_half_swap_msg(
+    deps: &DepsMut<CustomQueryType>,
+    env: &Env,
+    stake: AllianceStakeToken,
+    // offset to account for funds being sent that should be ignored
+    negative_offset: Option<Uint128>,
+) -> StdResult<Vec<CosmosMsg<CustomMsgType>>> {
+    let mut amount =
+        deps.querier.query_balance(env.contract.address.to_string(), &stake.utoken)?.amount;
+
+    if let Some(negative_offset) = negative_offset {
+        amount = amount.checked_sub(negative_offset)?;
+    }
+
+    let amount_stake =
+        deps.querier.query_balance(env.contract.address.to_string(), stake.denom.clone())?.amount;
+
+    let mut result = Vec::new();
+
+    let check_msg = CallbackMsg::CheckReceivedCoin {
+        // 0. take current balance - offset
+        snapshot: Coin {
+            denom: stake.utoken,
+            amount,
+        },
+        snapshot_stake: Coin {
+            denom: stake.denom,
+            amount: amount_stake,
+        },
+    }
+    .into_cosmos_msg(&env.contract.address)?;
+    result.push(check_msg);
+
+    let state = State::default();
+    let pool = state.whale_btc_pool.load(deps.storage)?;
+    let amount = amount.checked_div(Uint128::new(2))?;
+    let denom = state.btc_denom.load(deps.storage)?;
+    let swap_config = (
+        StageType::Dex {
+            addr: pool,
+        },
+        DenomType::native(denom),
+        None, // price
+        Some(amount),
+        None,
+    );
+    let swap_msg = CallbackMsg::SingleStageSwap {
+        stage: vec![swap_config],
+        index: 0,
+    }
+    .into_cosmos_msg(&env.contract.address)?;
+    result.push(swap_msg);
+
+    Ok(result)
 }
 
 /// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution
