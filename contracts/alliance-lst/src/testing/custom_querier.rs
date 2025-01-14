@@ -1,7 +1,7 @@
 use cosmwasm_std::testing::{BankQuerier, StakingQuerier, MOCK_CONTRACT_ADDR};
 use cosmwasm_std::{
-    from_json, Addr, Coin, Empty, FullDelegation, Querier, QuerierResult, QueryRequest,
-    SystemError, WasmQuery,
+    from_json, to_json_binary, Addr, Coin, ContractResult, Empty, FullDelegation, Querier,
+    QuerierResult, QueryRequest, SystemError, SystemResult, WasmQuery,
 };
 
 use crate::types::Delegation;
@@ -64,6 +64,13 @@ impl CustomQuerier {
             },
 
             QueryRequest::Bank(query) => self.bank_querier.query(query),
+
+            QueryRequest::Wasm(WasmQuery::Raw {
+                contract_addr: _,
+                key: _,
+            }) => SystemResult::Ok(ContractResult::Ok(
+                to_json_binary(&vec!["alice", "bob", "charlie"]).unwrap(),
+            )),
 
             QueryRequest::Staking(query) => self.staking_querier.query(query),
 

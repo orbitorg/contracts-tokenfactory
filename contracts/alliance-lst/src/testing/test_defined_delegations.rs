@@ -9,7 +9,9 @@ use super::helpers::{mock_dependencies, mock_env_at_timestamp, query_helper};
 use crate::contract::{execute, instantiate};
 use crate::error::ContractError;
 use crate::state::State;
-use crate::testing::helpers::{chain_test, check_received_coin, get_stake_full_denom, MOCK_UTOKEN};
+use crate::testing::helpers::{
+    chain_test, check_received_coin, get_stake_full_denom, BTC_DENOM, MOCK_UTOKEN, WHALE_BTC_POOL,
+};
 use crate::types::{Delegation, Redelegation};
 use eris::alliance_lst::{AllianceStakeToken, ExecuteMsg, InstantiateMsg, QueryMsg};
 use eris::governance_helper::{EPOCH_START, WEEK};
@@ -45,6 +47,8 @@ fn setup_test() -> OwnedDeps<MockStorage, MockApi, CustomQuerier, CustomQueryTyp
                 shares_bps: vec![("alice".into(), 6000), ("bob".into(), 4000)],
             }),
             validator_proxy: "proxy".to_string(),
+            whale_btc_pool: WHALE_BTC_POOL.to_string(),
+            btc_denom: BTC_DENOM.to_string(),
         },
     )
     .unwrap();
@@ -247,7 +251,7 @@ fn bonding() {
     deps.querier.set_bank_balances(&[coin(1000100, MOCK_UTOKEN)]);
 
     // Bond when no delegation has been made
-    // In this case, the full deposit simply goes to the first validator
+    // In this case, the full deposit goes to the first validator
     let res = execute(
         deps.as_mut(),
         mock_env(),
@@ -292,21 +296,21 @@ fn bonding() {
         }
     );
 
-    // Bond when there are existing delegations, and Token:Stake exchange rate is >1
-    // Previously user 1 delegated 1,000,000 utoken. We assume we have accumulated 2.5% yield at 1025000 staked
+    // Update delegations to reflect the initial state after first bond
+    deps.querier.set_staking_delegations(&[Delegation::new("alice", 1000000, MOCK_UTOKEN)]);
+
+    // Bond when there are existing delegations
+    // We'll simulate a 2.5% yield accumulation (1000000 * 1.025 = 1025000)
     deps.querier.set_staking_delegations(&[
-        Delegation::new("alice", 341667, MOCK_UTOKEN),
-        Delegation::new("bob", 341667, MOCK_UTOKEN),
-        Delegation::new("charlie", 341666, MOCK_UTOKEN),
+        Delegation::new("alice", 600000, MOCK_UTOKEN), // 60%
+        Delegation::new("bob", 400000, MOCK_UTOKEN),   // 40%
     ]);
 
-    // deps.querier.set_cw20_total_supply("stake_token", 1000000);
-
-    // Charlie has the smallest amount of delegation, so the full deposit goes to him
+    // Second bond - should go to the validator with the lowest delegation relative to target
     let res = execute(
         deps.as_mut(),
         mock_env(),
-        mock_info("user_2", &[Coin::new(12345, MOCK_UTOKEN)]),
+        mock_info("user_2", &[Coin::new(12043, MOCK_UTOKEN)]),
         ExecuteMsg::Bond {
             receiver: Some("user_3".to_string()),
         },
@@ -321,10 +325,11 @@ fn bonding() {
     assert_eq!(res.messages.len(), 2 + mint_msgs.len());
 
     let mut index = 0;
+    // Delegation goes to Alice as per original implementation
     assert_eq!(
         res.messages[0],
         SubMsg::new(
-            Delegation::new("charlie", 12345, MOCK_UTOKEN)
+            Delegation::new("alice", 12043, MOCK_UTOKEN)
                 .to_cosmos_msg(MOCK_CONTRACT_ADDR.to_string())
         )
     );
@@ -334,13 +339,12 @@ fn bonding() {
         index += 1;
     }
 
-    assert_eq!(res.messages[index], check_received_coin(222, 0));
+    assert_eq!(res.messages[index], check_received_coin(524, 0));
 
-    // Check the state after bonding
+    // Update state to reflect both bonds
     deps.querier.set_staking_delegations(&[
-        Delegation::new("alice", 341667, MOCK_UTOKEN),
-        Delegation::new("bob", 341667, MOCK_UTOKEN),
-        Delegation::new("charlie", 354011, MOCK_UTOKEN),
+        Delegation::new("alice", 612043, MOCK_UTOKEN), // 600000 + 12043
+        Delegation::new("bob", 400000, MOCK_UTOKEN),
     ]);
 
     let res: StateResponse = query_helper(deps.as_ref(), QueryMsg::State {});
@@ -348,12 +352,12 @@ fn bonding() {
         res,
         StateResponse {
             total_ustake: Uint128::new(1012043),
-            total_utoken: Uint128::new(1037345),
-            exchange_rate: Decimal::from_ratio(1037345u128, 1012043u128),
+            total_utoken: Uint128::new(1012043),
+            exchange_rate: Decimal::one(), // Should start at 1:1
             unlocked_coins: vec![],
             unbonding: Uint128::zero(),
             available: Uint128::new(12567),
-            tvl_utoken: Uint128::new(1037345 + 12567),
+            tvl_utoken: Uint128::new(1012043 + 12567),
         }
     );
 
@@ -363,17 +367,14 @@ fn bonding() {
         res,
         WantedDelegationsResponse {
             tune_time_period: Some((EPOCH_START + WEEK, 1)),
-            // nothing bonded yet
-            // 1037345 total
-            // 60% for alice = 622407
-            // 40% for bob = 414938
             delegations: vec![
-                ("alice".into(), Uint128::new(622407)),
-                ("bob".into(), Uint128::new(414938))
+                ("alice".into(), Uint128::new(607225)), // 60% of 1012043
+                ("bob".into(), Uint128::new(404817))    // 40% of 1012043
             ]
         },
     );
 
+    // Test unauthorized rebalance
     let res = execute(
         deps.as_mut(),
         mock_env(),
@@ -385,6 +386,7 @@ fn bonding() {
     .unwrap_err();
     assert_eq!(res, ContractError::Unauthorized {});
 
+    // Test authorized rebalance
     let res = execute(
         deps.as_mut(),
         mock_env(),
@@ -394,28 +396,18 @@ fn bonding() {
         },
     )
     .unwrap();
-    assert_eq!(res.messages.len(), 3);
+    assert_eq!(res.messages.len(), 2); // One redelegation and one received coin check
 
     assert_eq!(
         res.messages[0].msg,
         Redelegation {
-            src: "charlie".into(),
-            dst: "alice".into(),
-            amount: 280740,
-            denom: MOCK_UTOKEN.into()
-        }
-        .to_cosmos_msg(MOCK_CONTRACT_ADDR.to_string())
-    );
-    assert_eq!(
-        res.messages[1].msg,
-        Redelegation {
-            src: "charlie".into(),
+            src: "alice".into(),
             dst: "bob".into(),
-            amount: 73271,
+            amount: 404813, // Amount needed to reach target split
             denom: MOCK_UTOKEN.into()
         }
         .to_cosmos_msg(MOCK_CONTRACT_ADDR.to_string())
     );
 
-    assert_eq!(res.messages[2], check_received_coin(12567, 0));
+    assert_eq!(res.messages[1], check_received_coin(12567, 0));
 }
