@@ -21,6 +21,7 @@ pub const MOCK_UTOKEN: &str = "utoken";
 pub const WHALE_BTC_POOL: &str =
     "migaloo1axtz4y7jyvdkkrflknv9dcut94xr5k8m6wete4rdrw4fuptk896su44x2z";
 pub const BTC_DENOM: &str = "ibc/6E5BF71FE1BEBBD648C8A7CB7A790AEF0081120B2E5746E6563FC95764716D61";
+pub const WHALE_DENOM: &str = "uwhale";
 
 pub(super) fn err_unsupported_query<T: std::fmt::Debug>(request: T) -> QuerierResult {
     SystemResult::Err(SystemError::InvalidRequest {
@@ -126,6 +127,7 @@ pub(super) fn setup_test() -> OwnedDeps<MockStorage, MockApi, CustomQuerier, Cus
             validator_proxy: "proxy".to_string(),
             whale_btc_pool: WHALE_BTC_POOL.to_string(),
             btc_denom: BTC_DENOM.to_string(),
+            whale_denom: WHALE_DENOM.to_string(),
         },
     )
     .unwrap();

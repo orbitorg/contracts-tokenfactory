@@ -36,6 +36,8 @@ pub struct State<'a> {
     pub whale_btc_pool: Item<'a, Addr>,
     /// Denom of BTC
     pub btc_denom: Item<'a, String>,
+    /// Whale denom
+    pub whale_denom: Item<'a, String>,
 
     /// How often the unbonding queue is to be executed
     pub epoch_period: Item<'a, u64>,
@@ -95,13 +97,13 @@ impl Default for State<'static> {
             withdrawals_preset: Item::new("withdrawals_preset"),
             stake_token: Item::new("stake_token"),
             btc_denom: Item::new("btc_denom"),
+            whale_denom: Item::new("whale_denom"),
             whale_btc_pool: Item::new("whale_btc_pool"),
             epoch_period: Item::new("epoch_period"),
             unbond_period: Item::new("unbond_period"),
             validator_proxy: Item::new("validator_proxy"),
             validators_proxy_item: Item::new("validators"),
             alliance_delegations: Item::new("alliance_delegations"),
-
             unlocked_coins: Item::new("unlocked_coins"),
             pending_batch: Item::new("pending_batch"),
             previous_batches: IndexedMap::new("previous_batches", pb_indexes),

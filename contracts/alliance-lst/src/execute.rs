@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::{cmp, vec};
 
+use astroport::asset::{Asset, AssetInfo};
 use cosmwasm_std::{
     attr, to_json_binary, Addr, Attribute, BankMsg, Coin, CosmosMsg, Decimal, DepsMut, Env, Event,
-    Order, ReplyOn, Response, StdResult, SubMsg, Uint128, WasmMsg,
+    Order, Response, StdResult, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use eris::alliance_lst::{AllianceStakeToken, InstantiateMsg, Undelegation};
@@ -78,6 +79,7 @@ pub fn instantiate(
 
     state.whale_btc_pool.save(deps.storage, &deps.api.addr_validate(&msg.whale_btc_pool)?)?;
     state.btc_denom.save(deps.storage, &msg.btc_denom)?;
+    state.whale_denom.save(deps.storage, &msg.whale_denom)?;
 
     // by default donations are set to false
     state.allow_donations.save(deps.storage, &false)?;
@@ -202,8 +204,12 @@ pub fn harvest(
     validators: Option<Vec<String>>,
     withdrawals: Option<Vec<(WithdrawType, DenomType)>>,
     stages: Option<Vec<Vec<SingleSwapConfig>>>,
-    sender: Addr,
+    _sender: Addr,
 ) -> ContractResult {
+    if stages.is_some() || withdrawals.is_some() {
+        return Err(ContractError::NotSupported("not support".to_string()));
+    }
+
     let state = State::default();
     let stake = state.stake_token.load(deps.storage)?;
 
@@ -237,73 +243,20 @@ pub fn harvest(
         })
         .collect::<Vec<_>>()
     };
-
-    // 2. Prepare LP withdrawals / deconstruction
-    let withdrawals =
-        state.get_or_preset(deps.storage, withdrawals, &state.withdrawals_preset, &sender)?;
-    let withdrawal_msg = withdrawals.map(|withdrawals| CallbackMsg::WithdrawLps {
-        withdrawals,
-    });
-
-    // 3. Prepare swap stages
-    let stages = state.get_or_preset(deps.storage, stages, &state.stages_preset, &sender)?;
-    validate_no_utoken_or_ustake_swap(&stages, &stake)?;
-    let mut skip_fee = false;
-    let swap_msgs = stages.map(|stages| {
-        stages
-            .into_iter()
-            .enumerate()
-            .map(|(index, stage)| {
-                skip_fee = skip_fee
-                    || stage.iter().any(|(_, _, _, _, pay_fee)| pay_fee.unwrap_or_default());
-
-                CallbackMsg::SingleStageSwap {
-                    index,
-                    stage,
-                }
-            })
-            .collect_vec()
-    });
-
-    let provide_liquidity = Pair(env.contract.address.clone())
-        .provide_liquidity_msg(vec![], None, Some(env.contract.address.to_string()), vec![])?
-        .to_specific()?;
-
-    let sub_msg = SubMsg {
-        id: 1,
-        msg: provide_liquidity,
-        gas_limit: None,
-        reply_on: ReplyOn::Never,
-    };
-
     Ok(Response::new()
-        // 1. Withdraw delegation rewards
         .add_messages(withdraw_submsgs)
-        // 2. Withdraw / Destruct LPs
-        .add_optional_callback(&env, withdrawal_msg)?
-        // 3 swap - multiple single stage swaps
-        .add_optional_callbacks(&env, swap_msgs)?
-        // 4. apply received total utoken to unlocked_coins
-        .add_messages(check_received_coin_and_half_swap_msg(
-            &deps,
-            &env,
-            state.stake_token.load(deps.storage)?,
-            None,
-        )?)
-        // 5. provide liquidity
-        .add_submessage(sub_msg)
-        // 6. apply lp token to unlocked_coins
+        .add_message(half_swap_reward_msg(&deps, &env)?)
+        .add_message(provide_liquidity_msg(&deps, &env)?)
         .add_message(check_received_coin_msg(
             &deps,
             &env,
             state.stake_token.load(deps.storage)?,
             None,
         )?)
-        // 7. restake unlocked_coins
         .add_callback(
             &env,
             CallbackMsg::Reinvest {
-                skip_fee,
+                skip_fee: false,
             },
         )?
         .add_attribute("action", "erishub/harvest"))
@@ -433,61 +386,70 @@ fn validate_no_belief_price(stages: &Vec<Vec<SingleSwapConfig>>) -> Result<(), C
     Ok(())
 }
 
-/// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution and swap half rewards to bitcoin
-fn check_received_coin_and_half_swap_msg(
+fn half_swap_reward_msg(
     deps: &DepsMut<CustomQueryType>,
     env: &Env,
-    stake: AllianceStakeToken,
-    // offset to account for funds being sent that should be ignored
-    negative_offset: Option<Uint128>,
-) -> StdResult<Vec<CosmosMsg<CustomMsgType>>> {
-    let mut amount =
-        deps.querier.query_balance(env.contract.address.to_string(), &stake.utoken)?.amount;
-
-    if let Some(negative_offset) = negative_offset {
-        amount = amount.checked_sub(negative_offset)?;
-    }
-
-    let amount_stake =
-        deps.querier.query_balance(env.contract.address.to_string(), stake.denom.clone())?.amount;
-
-    let mut result = Vec::new();
-
-    let check_msg = CallbackMsg::CheckReceivedCoin {
-        // 0. take current balance - offset
-        snapshot: Coin {
-            denom: stake.utoken,
-            amount,
-        },
-        snapshot_stake: Coin {
-            denom: stake.denom,
-            amount: amount_stake,
-        },
-    }
-    .into_cosmos_msg(&env.contract.address)?;
-    result.push(check_msg);
-
+) -> StdResult<CosmosMsg<CustomMsgType>> {
     let state = State::default();
+    let whale_denom = state.whale_denom.load(deps.storage)?;
+    let amount = deps.querier.query_balance(env.contract.address.to_string(), &whale_denom)?.amount;
     let pool = state.whale_btc_pool.load(deps.storage)?;
     let amount = amount.checked_div(Uint128::new(2))?;
-    let denom = state.btc_denom.load(deps.storage)?;
+    let btc_denom = state.btc_denom.load(deps.storage)?;
     let swap_config = (
         StageType::Dex {
             addr: pool,
         },
-        DenomType::native(denom),
+        DenomType::native(btc_denom),
         None, // price
         Some(amount),
         None,
     );
-    let swap_msg = CallbackMsg::SingleStageSwap {
+    CallbackMsg::SingleStageSwap {
         stage: vec![swap_config],
         index: 0,
     }
-    .into_cosmos_msg(&env.contract.address)?;
-    result.push(swap_msg);
+    .into_cosmos_msg(&env.contract.address)
+}
 
-    Ok(result)
+fn provide_liquidity_msg(
+    deps: &DepsMut<CustomQueryType>,
+    env: &Env,
+) -> StdResult<CosmosMsg<CustomMsgType>> {
+    let state = State::default();
+    let whale_denom = state.whale_denom.load(deps.storage)?;
+    let btc_denom = state.btc_denom.load(deps.storage)?;
+    let whale_btc_pool = state.whale_btc_pool.load(deps.storage)?;
+    let whale_amount =
+        deps.querier.query_balance(env.contract.address.to_string(), &whale_denom)?.amount;
+    let btc_amount =
+        deps.querier.query_balance(env.contract.address.to_string(), &btc_denom)?.amount;
+    let mut assets: Vec<Asset> = Vec::new();
+    let mut funds: Vec<Coin> = Vec::new();
+
+    assets.push(Asset {
+        info: AssetInfo::NativeToken {
+            denom: whale_denom.clone(),
+        },
+        amount: whale_amount,
+    });
+    assets.push(Asset {
+        info: AssetInfo::NativeToken {
+            denom: btc_denom.clone(),
+        },
+        amount: btc_amount,
+    });
+    funds.push(Coin {
+        denom: whale_denom,
+        amount: whale_amount,
+    });
+    funds.push(Coin {
+        denom: btc_denom,
+        amount: btc_amount,
+    });
+    Pair(whale_btc_pool)
+        .provide_liquidity_msg(assets, None, Some(env.contract.address.to_string()), funds)?
+        .to_specific()
 }
 
 /// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution
@@ -1261,6 +1223,9 @@ pub fn update_config(
     epoch_period: Option<u64>,
     unbond_period: Option<u64>,
     validator_proxy: Option<String>,
+    whale_denom: Option<String>,
+    btc_denom: Option<String>,
+    whale_btc_pool: Option<Addr>,
 ) -> ContractResult {
     let state = State::default();
 
@@ -1333,6 +1298,16 @@ pub fn update_config(
     }
     if let Some(default_max_spread) = default_max_spread {
         state.default_max_spread.save(deps.storage, &default_max_spread)?;
+    }
+
+    if let Some(whale_denom) = whale_denom {
+        state.whale_denom.save(deps.storage, &whale_denom)?;
+    }
+    if let Some(btc_denom) = btc_denom {
+        state.btc_denom.save(deps.storage, &btc_denom)?;
+    }
+    if let Some(whale_btc_pool) = whale_btc_pool {
+        state.whale_btc_pool.save(deps.storage, &whale_btc_pool)?;
     }
 
     Ok(Response::new().add_attribute("action", "erishub/update_config"))

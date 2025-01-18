@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Decimal, Uint128};
+use cosmwasm_std::{Addr, Decimal, Uint128};
 use eris_chain_adapter::types::{DenomType, WithdrawType};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,7 @@ pub struct InstantiateMsg {
 
     pub whale_btc_pool: String,
     pub btc_denom: String,
+    pub whale_denom: String,
 
     /// Contract address where fees are sent
     pub protocol_fee_contract: String,
@@ -128,6 +129,10 @@ pub enum ExecuteMsg {
         unbond_period: Option<u64>,
         /// Specifies a validators proxy contract, so that validators are not locally stored
         validator_proxy: Option<String>,
+
+        whale_denom: Option<String>,
+        btc_denom: Option<String>,
+        whale_btc_pool: Option<Addr>,
     },
 
     /// Submit an unbonding request to the current unbonding queue; automatically invokes `unbond`

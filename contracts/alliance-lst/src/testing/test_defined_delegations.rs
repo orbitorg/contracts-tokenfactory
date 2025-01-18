@@ -11,6 +11,7 @@ use crate::error::ContractError;
 use crate::state::State;
 use crate::testing::helpers::{
     chain_test, check_received_coin, get_stake_full_denom, BTC_DENOM, MOCK_UTOKEN, WHALE_BTC_POOL,
+    WHALE_DENOM,
 };
 use crate::types::{Delegation, Redelegation};
 use eris::alliance_lst::{AllianceStakeToken, ExecuteMsg, InstantiateMsg, QueryMsg};
@@ -49,6 +50,7 @@ fn setup_test() -> OwnedDeps<MockStorage, MockApi, CustomQuerier, CustomQueryTyp
             validator_proxy: "proxy".to_string(),
             whale_btc_pool: WHALE_BTC_POOL.to_string(),
             btc_denom: BTC_DENOM.to_string(),
+            whale_denom: WHALE_DENOM.to_string(),
         },
     )
     .unwrap();
@@ -169,6 +171,9 @@ fn validate_update() {
             epoch_period: None,
             unbond_period: None,
             validator_proxy: None,
+            whale_denom: None,
+            btc_denom: None,
+            whale_btc_pool: None,
         },
     )
     .unwrap_err();
@@ -193,6 +198,9 @@ fn validate_update() {
             epoch_period: None,
             unbond_period: None,
             validator_proxy: None,
+            whale_denom: None,
+            btc_denom: None,
+            whale_btc_pool: None,
         },
     )
     .unwrap_err();
@@ -216,6 +224,9 @@ fn validate_update() {
             epoch_period: None,
             unbond_period: None,
             validator_proxy: None,
+            whale_denom: None,
+            btc_denom: None,
+            whale_btc_pool: None,
         },
     )
     .unwrap_err();
@@ -239,6 +250,9 @@ fn validate_update() {
             epoch_period: None,
             unbond_period: None,
             validator_proxy: None,
+            whale_denom: None,
+            btc_denom: None,
+            whale_btc_pool: None,
         },
     )
     .unwrap();

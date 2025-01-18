@@ -87,6 +87,9 @@ pub fn execute(
             epoch_period,
             unbond_period,
             validator_proxy,
+            whale_denom,
+            btc_denom,
+            whale_btc_pool,
         } => execute::update_config(
             deps,
             info.sender,
@@ -101,6 +104,9 @@ pub fn execute(
             epoch_period,
             unbond_period,
             validator_proxy,
+            whale_denom,
+            btc_denom,
+            whale_btc_pool,
         ),
         ExecuteMsg::QueueUnbond {
             receiver,
