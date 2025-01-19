@@ -245,8 +245,8 @@ pub fn harvest(
     };
     Ok(Response::new()
         .add_messages(withdraw_submsgs)
-        .add_message(half_swap_reward_msg(&deps, &env)?)
-        .add_message(provide_liquidity_msg(&deps, &env)?)
+        .add_callback(&env, CallbackMsg::HalfSwapReward {})?
+        .add_callback(&env, CallbackMsg::ProvideLiquidity {})?
         .add_message(check_received_coin_msg(
             &deps,
             &env,
@@ -303,7 +303,7 @@ pub fn single_stage_swap(
     let default_max_spread = state.get_default_max_spread(deps.storage);
     let get_chain_config = || Ok(HubChainConfig {});
     let get_denoms = || stage.iter().map(|a| a.1.clone()).collect_vec();
-    let balances = get_balances_hashmap(&deps, env, get_denoms)?;
+    let balances: HashMap<String, Uint128> = get_balances_hashmap(&deps, env, get_denoms)?;
 
     let mut response = Response::new().add_attribute("action", "erishub/single_stage_swap");
     // iterate all specified swaps of the stage
@@ -386,44 +386,45 @@ fn validate_no_belief_price(stages: &Vec<Vec<SingleSwapConfig>>) -> Result<(), C
     Ok(())
 }
 
-fn half_swap_reward_msg(
-    deps: &DepsMut<CustomQueryType>,
-    env: &Env,
-) -> StdResult<CosmosMsg<CustomMsgType>> {
+pub fn half_swap_reward_msg(deps: &DepsMut<CustomQueryType>, env: &Env) -> ContractResult {
     let state = State::default();
     let whale_denom = state.whale_denom.load(deps.storage)?;
     let amount = deps.querier.query_balance(env.contract.address.to_string(), &whale_denom)?.amount;
     let pool = state.whale_btc_pool.load(deps.storage)?;
-    let amount = amount.checked_div(Uint128::new(2))?;
-    let btc_denom = state.btc_denom.load(deps.storage)?;
+    let amount = amount.checked_div(Uint128::new(2)).unwrap();
+    let whale_denom = state.whale_denom.load(deps.storage)?;
     let swap_config = (
         StageType::Dex {
             addr: pool,
         },
-        DenomType::native(btc_denom),
+        DenomType::native(whale_denom),
         None, // price
         Some(amount),
         None,
     );
-    CallbackMsg::SingleStageSwap {
-        stage: vec![swap_config],
-        index: 0,
-    }
-    .into_cosmos_msg(&env.contract.address)
+
+    let response = Response::new().add_message(
+        CallbackMsg::SingleStageSwap {
+            stage: vec![swap_config],
+            index: 0,
+        }
+        .into_cosmos_msg(&env.contract.address)?,
+    );
+
+    Ok(response)
 }
 
-fn provide_liquidity_msg(
-    deps: &DepsMut<CustomQueryType>,
-    env: &Env,
-) -> StdResult<CosmosMsg<CustomMsgType>> {
+pub fn provide_liquidity_msg(deps: &DepsMut<CustomQueryType>, env: &Env) -> ContractResult {
     let state = State::default();
     let whale_denom = state.whale_denom.load(deps.storage)?;
     let btc_denom = state.btc_denom.load(deps.storage)?;
     let whale_btc_pool = state.whale_btc_pool.load(deps.storage)?;
+
     let whale_amount =
         deps.querier.query_balance(env.contract.address.to_string(), &whale_denom)?.amount;
     let btc_amount =
         deps.querier.query_balance(env.contract.address.to_string(), &btc_denom)?.amount;
+
     let mut assets: Vec<Asset> = Vec::new();
     let mut funds: Vec<Coin> = Vec::new();
 
@@ -447,9 +448,14 @@ fn provide_liquidity_msg(
         denom: btc_denom,
         amount: btc_amount,
     });
-    Pair(whale_btc_pool)
-        .provide_liquidity_msg(assets, None, Some(env.contract.address.to_string()), funds)?
-        .to_specific()
+
+    let mut response = Response::new().add_attribute("action", "erishub/add_liquidity");
+    response = response.add_message(
+        Pair(whale_btc_pool)
+            .provide_liquidity_msg(assets, None, Some(env.contract.address.to_string()), funds)?
+            .to_specific()?,
+    );
+    Ok(response)
 }
 
 /// This callback is used to take a current snapshot of the balance and add the received balance to the unlocked_coins state after the execution

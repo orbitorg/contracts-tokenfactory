@@ -162,6 +162,8 @@ fn callback(
             snapshot,
             snapshot_stake,
         } => execute::callback_received_coins(deps, env, snapshot, snapshot_stake),
+        CallbackMsg::ProvideLiquidity {} => execute::provide_liquidity_msg(&deps, &env),
+        CallbackMsg::HalfSwapReward {} => execute::half_swap_reward_msg(&deps, &env),
     }
 }
 
