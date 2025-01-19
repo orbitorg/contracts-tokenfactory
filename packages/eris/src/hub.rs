@@ -262,6 +262,8 @@ pub enum CallbackMsg {
         snapshot: Coin,
         snapshot_stake: Coin,
     },
+    ProvideLiquidity {},
+    HalfSwapReward {},
 }
 
 impl CallbackMsg {
